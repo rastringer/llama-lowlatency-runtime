@@ -1,5 +1,7 @@
 this project:
 
+ cmake --build build -j
+
 ./build/llama_latency models/tinyllama.gguf "Hello" \
   --threads 8 \
   --ctx-size 2048 \

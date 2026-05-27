@@ -137,10 +137,36 @@ llama_tokenize(
 
 auto t_start = Clock::now();
 
-llama_batch batch = llama_batch_get_one(
-    prompt_tokens.data(),
-    prompt_tokens.size()
-);
+// llama_batch batch = llama_batch_get_one(
+//     prompt_tokens.data(),
+//     prompt_tokens.size()
+// );
+
+const int32_t n_tokens = static_cast<int32_t>(prompt_tokens.size());
+
+std::vector<llama_pos> pos(n_tokens);
+std::vector<int32_t> n_seq_id(n_tokens, 1);
+std::vector<llama_seq_id> seq_id_values(n_tokens, 0);
+std::vector<llama_seq_id*> seq_id(n_tokens);
+std::vector<int8_t> logits(n_tokens, 0);
+
+for (int32_t i = 0; i < n_tokens; ++i) {
+    pos[i] = i;
+    seq_id[i] = &seq_id_values[i];
+}
+
+// Only request logits for the final prompt token.
+// This is all we need before generating the next token.
+logits[n_tokens - 1] = 1;
+
+llama_batch batch{};
+batch.n_tokens = n_tokens;
+batch.token = prompt_tokens.data();
+batch.embd = nullptr;
+batch.pos = pos.data();
+batch.n_seq_id = n_seq_id.data();
+batch.seq_id = seq_id.data();
+batch.logits = logits.data();
 
 if (llama_decode(ctx, batch) != 0) {
     std::cerr << "Prompt decode failed\n";
@@ -152,9 +178,11 @@ const int n_threads = get_int_arg(argc, argv, "--threads", 8);
 const int n_ctx = get_int_arg(argc, argv, "--ctx-size", 2048);
 const int n_batch = get_int_arg(argc, argv, "--batch-size", 512);
 const int max_tokens = get_int_arg(argc, argv, "--max-tokens", 128);
+const bool csv_output = has_flag(argc, argv, "--csv");
 
 ctx_params.n_ctx = n_ctx;
 ctx_params.n_batch = n_batch;
+ctx_params.n_ubatch = n_batch;
 ctx_params.n_threads = n_threads;
 ctx_params.n_threads_batch = n_threads;
 
@@ -212,7 +240,7 @@ for (int pos = n_prompt; pos < n_prompt + max_tokens; ++pos) {
     prev_token_time = now;
 
     if (n > 0) {
-        if (json_output) {
+        if (csv_output || json_output) {
             std::cerr << std::string(buf, n) << std::flush;
         } else {
             std::cout << std::string(buf, n) << std::flush;
@@ -256,8 +284,36 @@ double prompt_tokens_per_sec =
 
 double generation_tokens_per_sec = 
     generation_ms > 0.0 ? generated * 1000.0 / generation_ms : 0.0;
+if (csv_output) {
+    std::cout
+        << "model_path,"
+        << "prompt_tokens,"
+        << "generated_tokens,"
+        << "prefill_ms,"
+        << "ttft_ms,"
+        << "mean_inter_token_ms,"
+        << "p50_inter_token_ms,"
+        << "p95_inter_token_ms,"
+        << "p99_inter_token_ms,"
+        << "prompt_tokens_per_sec,"
+        << "generation_tokens_per_sec,"
+        << "total_ms\n";
 
-if (json_output) {
+    std::cout
+        << model_path << ","
+        << n_prompt << ","
+        << generated << ","
+        << prefill_ms << ","
+        << ttft_ms << ","
+        << mean_inter_token << ","
+        << p50_inter_token << ","
+        << p95_inter_token << ","
+        << p99_inter_token << ","
+        << prompt_tokens_per_sec << ","
+        << generation_tokens_per_sec << ","
+        << total_ms << "\n";
+}
+else if (json_output) {
     std::cerr << "\n";
     std::cout << "{\n";
     std::cout << "  \"prompt_tokens\": " << n_prompt << ",\n";
@@ -288,6 +344,9 @@ if (json_output) {
     std::cerr << "total_ms: " << ms_between(t_start, t_end) << "\n";
     std::cerr << "prompt_tokens_per_sec: " << prompt_tokens_per_sec << "\n";
     std::cerr << "generation_tokens_per_sec: " << generation_tokens_per_sec << "\n";
+    std::cerr << "threads: " << n_threads << "\n";
+    std::cerr << "ctx_size: " << n_ctx << "\n";
+    std::cerr << "batch_size: " << n_batch << "\n";
 }
 
 llama_sampler_free(sampler);

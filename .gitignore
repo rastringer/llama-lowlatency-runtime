@@ -3,7 +3,8 @@
 /models/*
 /models/*.txt
 !models/.gitkeep
-
+*.txt
+*.csv
 *.o
 *.a
 *.so
