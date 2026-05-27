@@ -179,6 +179,7 @@ const int n_ctx = get_int_arg(argc, argv, "--ctx-size", 2048);
 const int n_batch = get_int_arg(argc, argv, "--batch-size", 512);
 const int max_tokens = get_int_arg(argc, argv, "--max-tokens", 128);
 const bool csv_output = has_flag(argc, argv, "--csv");
+const bool csv_no_header = has_flag(argc, argv, "--csv-no-header");
 
 ctx_params.n_ctx = n_ctx;
 ctx_params.n_batch = n_batch;
@@ -285,19 +286,9 @@ double prompt_tokens_per_sec =
 double generation_tokens_per_sec = 
     generation_ms > 0.0 ? generated * 1000.0 / generation_ms : 0.0;
 if (csv_output) {
-    std::cout
-        << "model_path,"
-        << "prompt_tokens,"
-        << "generated_tokens,"
-        << "prefill_ms,"
-        << "ttft_ms,"
-        << "mean_inter_token_ms,"
-        << "p50_inter_token_ms,"
-        << "p95_inter_token_ms,"
-        << "p99_inter_token_ms,"
-        << "prompt_tokens_per_sec,"
-        << "generation_tokens_per_sec,"
-        << "total_ms\n";
+    if (!csv_no_header) {
+        std::cout << "model_path,prompt_tokens,generated_tokens,prefill_ms,ttft_ms,mean_inter_token_ms,p50_inter_token_ms,p95_inter_token_ms,p99_inter_token_ms,prompt_tokens_per_sec,generation_tokens_per_sec,total_ms\n";
+    }
 
     std::cout
         << model_path << ","
