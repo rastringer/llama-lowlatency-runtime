@@ -1,0 +1,18 @@
+this project:
+
+./build/llama_latency models/tinyllama.gguf "Hello" \
+  --threads 8 \
+  --ctx-size 2048 \
+  --batch-size 512 \
+  --max-tokens 128
+
+Llama comparison:
+
+  build/bin/llama-cli \
+  -m models/tinyllama.gguf \
+  -p "Hello my name is" \
+  --temp 0 \
+  -n 128 \
+  -c 2048 \
+  -b 512 \
+  -t 8

@@ -16,6 +16,26 @@
 #include <vector>
 #include <algorithm>
 
+// JSON helper for benchmarking
+static bool has_flag(int argc, char** argv, const std::string& flag) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] == flag) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Helpers for cmd line flags
+static int get_int_arg(int argc, char** argv, const std::string& flag, int default_value) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] == flag) {
+            return std::stoi(argv[i+1]);
+        }
+    }
+    return default_value;
+}
+
 // Monotonic clock to avoid wall clock adjustments (for timezone changes etc)
 using Clock = std::chrono::steady_clock;
 
@@ -56,6 +76,7 @@ int main(int argc, char** argv) {
 
 const std::string model_path = argv[1];
 const std::string prompt = argv[2];
+const bool json_output = has_flag(argc, argv, "--json");
 
 llama_log_set(llama_log_callback, nullptr);
 
@@ -126,6 +147,18 @@ if (llama_decode(ctx, batch) != 0) {
     return 1;
 }
 
+
+const int n_threads = get_int_arg(argc, argv, "--threads", 8);
+const int n_ctx = get_int_arg(argc, argv, "--ctx-size", 2048);
+const int n_batch = get_int_arg(argc, argv, "--batch-size", 512);
+const int max_tokens = get_int_arg(argc, argv, "--max-tokens", 128);
+
+ctx_params.n_ctx = n_ctx;
+ctx_params.n_batch = n_batch;
+ctx_params.n_threads = n_threads;
+ctx_params.n_threads_batch = n_threads;
+
+
 // Prefil phase: run prompt through transformer once to 
 // populate KV cache before autoregressive generation begins
 // Large prompts affect prefil latency
@@ -133,7 +166,6 @@ auto t_after_prefill = Clock::now();
 
 llama_token new_token_id;
 int generated = 0;
-constexpr int max_tokens = 42;
 
 std::vector<double> inter_token_ms;
 Clock::time_point first_token_time;
@@ -180,7 +212,11 @@ for (int pos = n_prompt; pos < n_prompt + max_tokens; ++pos) {
     prev_token_time = now;
 
     if (n > 0) {
-        std::cout << std::string(buf, n) << std::flush;
+        if (json_output) {
+            std::cerr << std::string(buf, n) << std::flush;
+        } else {
+            std::cout << std::string(buf, n) << std::flush;
+        }
     }
 
     llama_token token = new_token_id;
@@ -211,17 +247,48 @@ if (!inter_token_ms.empty()) {
 double p50_inter_token = percentile(inter_token_ms, 50.0);
 double p95_inter_token = percentile(inter_token_ms, 95.0);
 double p99_inter_token = percentile(inter_token_ms, 99.0);
+double prefill_ms = ms_between(t_start, t_after_prefill);
+double total_ms = ms_between(t_start, t_end);
+double generation_ms = total_ms - ttft_ms;
 
-std::cerr << "\n\n=== Latency Metrics ===\n";
-std::cerr << "prompt_tokens: " << n_prompt << "\n";
-std::cerr << "generated_tokens: " << generated << "\n"; 
-std::cerr << "prefill_ms: " << ms_between(t_start, t_after_prefill) << "\n";
-std::cerr << "ttft_ms: " << ttft_ms << "\n";
-std::cerr << "mean_inter_token_ms: " << mean_inter_token << "\n";
-std::cerr << "total_ms: " << ms_between(t_start, t_end) << "\n";
-std::cerr << "p50_inter_token_ms: " << p50_inter_token << "\n";
-std::cerr << "p95_inter_token_ms: " << p95_inter_token << "\n";
-std::cerr << "p99_inter_token_ms: " << p99_inter_token << "\n";
+double prompt_tokens_per_sec = 
+    prefill_ms > 0.0 ? n_prompt * 1000.0 / prefill_ms : 0.0;
+
+double generation_tokens_per_sec = 
+    generation_ms > 0.0 ? generated * 1000.0 / generation_ms : 0.0;
+
+if (json_output) {
+    std::cerr << "\n";
+    std::cout << "{\n";
+    std::cout << "  \"prompt_tokens\": " << n_prompt << ",\n";
+    std::cout << "  \"generated_tokens\": " << generated << ",\n";
+    std::cout << "  \"prefill_ms\": " << ms_between(t_start, t_after_prefill) << ",\n";
+    std::cout << "  \"ttft_ms\": " << ttft_ms << ",\n";
+    std::cout << "  \"mean_inter_token_ms\": " << mean_inter_token << ",\n";
+    std::cout << "  \"p50_inter_token_ms\": " << p50_inter_token << ",\n";
+    std::cout << "  \"p95_inter_token_ms\": " << p95_inter_token << ",\n";
+    std::cout << "  \"p99_inter_token_ms\": " << p99_inter_token << ",\n";
+    std::cout << "  \"prompt_tokens_per_sec\": " << prompt_tokens_per_sec << "\n";
+    std::cout << "  \"generation_tokens_per_sec\": " << generation_tokens_per_sec << "\n";
+    std::cout << "  \"total_ms\": " << ms_between(t_start, t_end) << "\n";
+    std::cout << "}\n";
+    std::cerr << "threads: " << n_threads << "\n";
+    std::cerr << "ctx_size: " << n_ctx << "\n";
+    std::cerr << "batch_size: " << n_batch << "\n";
+} else {
+    std::cerr << "\n\n=== Latency Metrics ===\n";
+    std::cerr << "prompt_tokens: " << n_prompt << "\n";
+    std::cerr << "generated_tokens: " << generated << "\n";
+    std::cerr << "prefill_ms: " << ms_between(t_start, t_after_prefill) << "\n";
+    std::cerr << "ttft_ms: " << ttft_ms << "\n";
+    std::cerr << "mean_inter_token_ms: " << mean_inter_token << "\n";
+    std::cerr << "p50_inter_token_ms: " << p50_inter_token << "\n";
+    std::cerr << "p95_inter_token_ms: " << p95_inter_token << "\n";
+    std::cerr << "p99_inter_token_ms: " << p99_inter_token << "\n";
+    std::cerr << "total_ms: " << ms_between(t_start, t_end) << "\n";
+    std::cerr << "prompt_tokens_per_sec: " << prompt_tokens_per_sec << "\n";
+    std::cerr << "generation_tokens_per_sec: " << generation_tokens_per_sec << "\n";
+}
 
 llama_sampler_free(sampler);
 llama_free(ctx);
